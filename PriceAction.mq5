@@ -27,6 +27,7 @@ input int grid_chain_sec=7000;
 input double unliquid_mode=false;
 input bool recover_expired_daily_ordes=true;
 input double critical_margin_level=10000;
+input bool print_comments=false;
 
 bool quote_mode= false;
 int quote_step = 2;
@@ -38,6 +39,33 @@ double curr_ask = 0;
 MqlTick last_tick;
 int curr_position=0;
 double curr_deposit=0;
+//comment
+#property strict
+
+#include <Comment\Comment.mqh>
+//---
+#define EXPERT_NAME     "Comment EA"
+#define EXPERT_VERSION  "1.0"
+//--- custom colors
+#define COLOR_BACK      clrBlack
+#define COLOR_BORDER    clrDimGray
+#define COLOR_CAPTION   clrDodgerBlue
+#define COLOR_TEXT      clrLightGray
+#define COLOR_WIN       clrLimeGreen
+#define COLOR_LOSS      clrOrangeRed
+//--- input parameters
+bool              InpAutoColors=true;//Auto Colors
+string            title_ea_options="=== EA Options ===";//EA Options
+ENUM_TIMEFRAMES   InpTimeframe=PERIOD_H1;//Timeframe
+double            InpVolume=0.1;//Lots
+uint              InpStopLoss=20;//Stop Loss, pips
+uint              InpTakeProfit=15;//Take Profit, pips
+//--- global variable
+CComment comment1;
+int tester;
+int visual_mode;
+datetime last_comment_time=TimeCurrent();
+//end comment 
 
 bool low_margin=false;
 //+------------------------------------------------------------------+
@@ -81,9 +109,7 @@ struct accumulate_info
    double            execution_strike_price;
    int               expiration_chain_sec;
   };
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
+
 accumulate_info accumulate_registry[300];
 //+------------------------------------------------------------------+
 //|                                                                  |
@@ -139,37 +165,6 @@ struct pos_info
    double            price_level_3;
 
   };
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
-struct book_info
-  {
-   int               fill_flag;
-   double            small_book_volume;
-   double            middle_book_volume;
-   double            large_book_volume;
-
-   double            small_10_volume;
-   double            middle_10_volume;
-   double            large_10_volume;
-   int               book_size;
-  };
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
-struct accumulate_vol_info
-  {
-   double            first_acc_price_bid;
-   double            last_acc_price_bid;
-   double            acc_volume_bid;
-
-   double            average_volume_by_range;
-
-   double            first_acc_price_ask;
-   double            last_acc_price_ask;
-   double            acc_volume_ask;
-
-  };
 
 pos_info info_pos_bid;
 pos_info info_pos_ask;
@@ -179,7 +174,6 @@ pos_info info_pos_ask_sub1;
 pos_info info_pos_ask_sub2;
 bars_parameters bars_info;
 
-book_info curr_book_param;
 int book_param_count=1;
 int expiration_pos_ticket_count=1;
 
@@ -230,14 +224,8 @@ bool near_sell_pending_flag_boost = false;
 
 double spread_executed_lot=0;
 double spread_underwater_executed_lot=0;
-
-book_info book_registry[100];
-
-book_info curr_book;// resultiruushie parametri
-
-int fl=0;
 //+------------------------------------------------------------------+
-//|        Account login, validate deposit                           |
+//|                                                                  |
 //+------------------------------------------------------------------+
 int OnInit()
   {
@@ -271,79 +259,57 @@ void OnTick()
       return;
      }
 //currenty always true
-   if(intercept_mode)
+
+//EXECUTION MODULE
+   MqlRates mrate[];
+   CopyRates(_Symbol,PERIOD_H1,0,check_bars_range,mrate);
+   int fl_init=0;
+   int fl_percent=0;
+   int fl_impact = 0;
+   int fl_margin = 0;
+// @var double pending_buy_lot_total amount of pending buy orders, in case of pending orders cease execution
+   if(pending_buy_lot_total==0)
+     {fl_init=1;}
+
+// Measure that the price change is acceptable according to our strategy @see README
+   if((mrate[0].close-last_tick.bid)/mrate[0].close>decrease_coeff_init)
+     {fl_percent=1;}
+
+   if(IsNotNewHighImpact(_Symbol,check_bars_range,3,mrate[0].close,last_tick.bid))
+     {fl_impact=1;}
+
+   if(lowest_buy_price_executed!=0 && (lowest_buy_price_executed-last_tick.bid)/lowest_buy_price_executed>grid_percent_range)
+     {fl_percent=1;}
+
+   ArraySetAsSeries(mrate,true);
+// if the decrease occurs on the opening, disregard percent filter @see fl_percent
+   if(stime.hour==10)
      {
-      MqlRates mrate[];
-      CopyRates(_Symbol,PERIOD_H1,0,check_bars_range,mrate);
-      int fl_init=0;
-      int fl_percent=0;
-      int fl_impact = 0;
-      int fl_margin = 0;
-      // @var double pending_buy_lot_total amount of pending buy orders, in case of pending orders cease execution
-      if(pending_buy_lot_total==0)
-        {fl_init=1;}
+      //Check again if the decrease is high enough to enter a new position
+      if((mrate[0].open-last_tick.bid)/mrate[0].open>decrease_coeff_init)
+        {fl_percent=1;fl_impact=1;}
 
-      // Measure that the price change is acceptable according to our strategy @see README
-      if((mrate[0].close-last_tick.bid)/mrate[0].close>decrease_coeff_init)
-        {fl_percent=1;}
-
-      if(IsNotNewHighImpact(_Symbol,check_bars_range,3,mrate[0].close,last_tick.bid))
-        {fl_impact=1;}
-
-      if(lowest_buy_price_executed!=0 && (lowest_buy_price_executed-last_tick.bid)/lowest_buy_price_executed>grid_percent_range)
-        {fl_percent=1;}
-
-      ArraySetAsSeries(mrate,true);
-      // if the decrease occurs on the opening, disregard percent filter @see fl_percent
-      if(stime.hour==10)
-        {
-         //Check again if the decrease is high enough to enter a new position
-         if((mrate[0].open-last_tick.bid)/mrate[0].open>decrease_coeff_init)
-           {fl_percent=1;fl_impact=1;}
-
-        }
-      //check if position already exists on this asset, internal function
-      if(PositionSelect(_Symbol))
-        {
-         double total_lot=PositionGetDouble(POSITION_VOLUME)+pending_buy_lot_total;
-         //check if current used capital is not higher than allocated amount from the deposit to be used by the robot
-         if(total_lot*lot_margin<curr_deposit*robot_amount_deposit_percent)
-           {fl_margin=1;}
-        }
-      else if(pending_buy_lot_total*lot_margin<curr_deposit*robot_amount_deposit_percent)
-        {fl_margin=1;}
-
-      //check that all filters pass
-      if(fl_init==1 && fl_impact==1 && fl_percent==1 && fl_margin==1)
-        {
-         //buys lot amount for every decrease of grid_percnet_ragne in price
-         CreateStockGrid(last_tick.bid,intercept_lot,grid_percent_range,grid_percent_range,false,0,grid_chain_sec);
-         GetAccumulateAverageParameteres(curr_last,false);
-        }
      }
-//might not be used
+//check if position already exists on this asset, internal function
    if(PositionSelect(_Symbol))
      {
-      if(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY)
-        {
-         //BUY
-         curr_position=6;
+      double total_lot=PositionGetDouble(POSITION_VOLUME)+pending_buy_lot_total;
+      //check if current used capital is not higher than allocated amount from the deposit to be used by the robot
+      if(total_lot*lot_margin<curr_deposit*robot_amount_deposit_percent)
+        {fl_margin=1;}
+     }
+   else if(pending_buy_lot_total*lot_margin<curr_deposit*robot_amount_deposit_percent)
+     {fl_margin=1;}
 
-        }
-      else
-        {
-         //SELL
-         curr_position=5;
-        }
-      accumulate_registry[100].price_open=1111;
-     }
-   else
+//check that all filters pass
+   if(fl_init==1 && fl_impact==1 && fl_percent==1 && fl_margin==1)
      {
-      curr_position=0;
+      //buys lot amount for every decrease of grid_percnet_ragne in price
+      CreateStockGrid(last_tick.bid,intercept_lot,grid_percent_range,grid_percent_range,false,0,grid_chain_sec);
+      GetAccumulateAverageParameteres(curr_last,false);
      }
-    if (is_tester) {
-       executeTestOrders();
-    }
+//END EXECUTION MODULE
+   
   }
 //checks if the tick is not a proceeded by a high spike (e.g don't but on a correction)
 bool IsNotNewHighImpact(string symbol,int range,double  check_movement_coeff,double price_init,double curr_price)
@@ -487,18 +453,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 //for higher volumes
 //////////////////////////////////////////PARTIAL MODULE
 
-   if(trans.order_state==ORDER_STATE_PARTIAL)
-     {
-      if(trans.order_type==ORDER_TYPE_BUY_LIMIT)//BUY LIMIT
-        {
-
-        }
-      else//SELL LIMIT
-        {
-
-        }
-     }
-
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
@@ -551,83 +505,6 @@ double GetTargetPercentPrice(double price,double percentage,bool higher)//procen
 //|                for future imlementation                                                  |
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
-void SetNullBookStructure()
-  {
-   int size=ArraySize(book_registry);
-   for(int i=0;i<size;i++)
-     {
-      book_registry[i].fill_flag=0;
-      book_registry[i].large_10_volume=0;
-      book_registry[i].large_book_volume=0;
-      book_registry[i].middle_10_volume=0;
-      book_registry[i].middle_book_volume=0;
-      book_registry[i].small_10_volume=0;
-      book_registry[i].small_book_volume=0;
-     }
-
-  }
-//+------------------------------------------------------------------+
-//|        calculate average market depth                                                          |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-
-void GetBookParameters(double percent_of_top,bool average_research_flag=true)
-  {
-   MqlBookInfo book[];
-   MarketBookGet(_Symbol,book);
-   int bookSize=ArraySize(book);
-   curr_book.book_size=bookSize;
-   if(average_research_flag)
-     {
-      int count=0;
-      long cum_vol=0;
-
-      int count_small = 0;
-      int count_middle=0;
-      int count_large =0;
-
-      double small=0;
-      double middle= 0;
-      double large = 0;
-      long range_vol[];
-      ArrayResize(range_vol,bookSize);
-
-      for(int i=0;i<bookSize;i++)
-        {
-         if(book[i].volume!=0)
-           {
-            range_vol[count]=book[i].volume;
-            count++;
-           }
-        }
-      ArraySort(range_vol);
-      for(int i=1;i<count;i++)
-        {
-         if(i<count/3)
-           {
-            count_small++;
-            small=small+range_vol[i];
-           }
-         else if(i>count/3 && i<count-(count/3))
-           {
-            count_middle++;
-            middle=middle+range_vol[i];
-           }
-         else if(i>(count-(count/percent_of_top)))
-           {
-            count_large++;
-            large=large+range_vol[i];
-           }
-        }
-      curr_book_param.fill_flag=1;
-      curr_book_param.small_book_volume=small;
-      curr_book_param.middle_book_volume=middle;
-      curr_book_param.large_book_volume=large;
-      book_registry[book_param_count]=curr_book_param;
-      if(book_param_count==99)
-        {book_param_count=1;}else{book_param_count++;}
-     }
-  }
 //+------------------------------------------------------------------+
 //|                        create orders grid, add to local register using struct                                          |
 //+------------------------------------------------------------------+
@@ -639,55 +516,18 @@ void CreateStockGrid(double init_stock_price,double lot,double price_percent_ste
    double curr_pr=init_stock_price;
    if(ask_true)
      {
-      if(!book_mode)
+      double adapted_percent_price=init_stock_price;
+      for(int i=1;i<=steps;i++)
         {
-         double adapted_percent_price=init_stock_price;
-         for(int i=1;i<=steps;i++)
-           {
-            double st_price=GetTargetPercentPrice(adapted_percent_price,strike_percentile,false);
-            
-            AddOrderToRegistry(adapted_percent_price,lot,exp_sec,exp_chain_sec,st_price,true,intercept_flag,TimeCurrent());
-            if(!is_tester) {
-                 PlaceOrder(adapted_percent_price,lot,false,true,0);
-            }
-           
-            adapted_percent_price=GetTargetPercentPrice(adapted_percent_price,price_percent_step,true);
-            if(i>1 && progressive_coeff!=0)
-              {drop_modifier=drop_modifier+progressive_coeff;}
+         double st_price=GetTargetPercentPrice(adapted_percent_price,strike_percentile,false);
 
-            //ras4et point dobavit'
-           }
-        }
-      else
-        {
-         MqlBookInfo mbook[];
-         MarketBookGet(_Symbol,mbook);
-         int size=ArraySize(mbook);
-
-         for(int x=0;x<size;x++)
-           {
-            if(mbook[x].price==init_stock_price)
-              {
-               int count= 0;
-               for(int i=x;i>=0;i--)
-                 {
-                  if(count<=steps)
-                    {
-                     double st_price=0;
-                     if(counter_book_flag){st_price=mbook[i+1].price;}
-                     else
-                       {st_price=GetTargetPercentPrice(mbook[i].price,strike_percentile,false);}
-
-                     AddOrderToRegistry(mbook[i].price,lot,exp_sec,exp_chain_sec,st_price,true,intercept_flag,TimeCurrent());
-                     PlaceOrder(mbook[i].price,lot,false,true,0);
-                     count++;
-                    }
-                 }
-               break;
-              }
-           }
+         AddOrderToRegistry(adapted_percent_price,lot,exp_sec,exp_chain_sec,st_price,true,intercept_flag,TimeCurrent());
+         PlaceOrder(adapted_percent_price,lot,false,true,0);
+         adapted_percent_price=GetTargetPercentPrice(adapted_percent_price,price_percent_step,true);
+         //ras4et point dobavit'
         }
      }
+
    else/////// Ask_true = false
      {
       if(!book_mode)
@@ -702,41 +542,12 @@ void CreateStockGrid(double init_stock_price,double lot,double price_percent_ste
 
             //ras4et point dobavit'
            }
-        }
-      else
-        {
-         MqlBookInfo mbook[];
-         MarketBookGet(_Symbol,mbook);
-         int size=ArraySize(mbook);
 
-         for(int x=0;x<size;x++)
-           {
-            if(mbook[x].price==init_stock_price)
-              {
-               int count = 0;
-               for(int i = x;i<size;i++)
-                 {
-                  if(count<=steps)
-                    {
-                     double st_price=0;
-                     if(counter_book_flag){st_price=mbook[i-1].price;}
-                     else
-                       {st_price=GetTargetPercentPrice(mbook[i].price,strike_percentile,true);}
-                     AddOrderToRegistry(mbook[i].price,lot,exp_sec,exp_chain_sec,st_price,false,intercept_flag,TimeCurrent());
-                     PlaceOrder(mbook[i].price,lot,true,true,0);
-                     count++;
-                    }
-                  else{break;}
-                 }
-               break;
-              }
-           }
         }
      }
   }
 //+------------------------------------------------------------------+
-//|               to predict possible price change pe candle, not in use = predict volatility of asset                                                  |
-//+------------------------------------------------------------------+
+//|                                                                  |
 //+------------------------------------------------------------------+
 void SetBarsSize(int range,int percent_of_top,bool tick_mode=false,int custom_set=0,int recovery_factor_range=1) //ustanavlivaet srednie razmeri barov po kategoriyam: naimenshie, srednie i naibloshie
   {
@@ -811,34 +622,6 @@ void SetBarsSize(int range,int percent_of_top,bool tick_mode=false,int custom_se
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 
-// called from market depth calc fn, for future use
-void GetResultBookParam()
-  {
-   long small=0;
-   long middle= 0;
-   long large = 0;
-   int count=0;
-   int size=ArraySize(book_registry);
-   for(int i=0;i<100;i++)
-     {
-      if(book_registry[i].fill_flag==0){continue;}
-      if(book_registry[i].small_book_volume!=0 && book_registry[i].middle_book_volume!=0 && book_registry[i].large_book_volume!=0)
-        {
-         small=small+book_registry[i].small_book_volume;
-         middle= middle+book_registry[i].middle_book_volume;
-         large = large+book_registry[i].large_book_volume;
-         count++;
-        }
-     }
-   curr_book.small_book_volume=small/count;
-   curr_book.middle_book_volume=middle/count;
-   curr_book.large_book_volume=large/count;
-
-  }
-//+------------------------------------------------------------------+
-//|              average trade volume for a range of time                                                    |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
 long GetAverageVolume(int range)
   {
    MqlRates rate[];
@@ -855,195 +638,6 @@ long GetAverageVolume(int range)
    long result=c_vol/c;
    return result;
   }
-//+------------------------------------------------------------------+
-//|                     get large orders to try to perceed, future use                                             |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-double GetActualAccumulation(int min_vol,bool ask_true,int def_average_vol,int def_cumulative_vol) //esle def_average vol = 0 togda ras4itivat srednii obiem na osnove min vol
-  {
-   double last_accumulation_price=0;
-   double first_accumulation_price=0;
-   int m_best_ask_index=0;
-   int m_best_bid_index=0;
-   MqlBookInfo MarketBook[];
-   MarketBookGet(_Symbol,MarketBook);
-//Find best ask by slow full search
-   int fl_start= 0;
-   int bookSize=ArraySize(MarketBook);
-   for(int i=0; i<bookSize; i++)
-
-     {
-      if((MarketBook[i].type==BOOK_TYPE_BUY) || (MarketBook[i].type==BOOK_TYPE_BUY_MARKET))
-        {
-         m_best_ask_index=i-1;
-         m_best_bid_index= i;
-         break;
-        }
-     }
-
-   if(MarketBook[m_best_ask_index].price==0 || MarketBook[m_best_ask_index].volume==0)
-     {
-      for(int i=m_best_ask_index;i>=0;i--)
-
-        {
-         if(MarketBook[i].price!=0)
-           {
-            m_best_ask_index=i;
-            break;
-           }
-        }
-     }
-//////////////////////////////////////////////////////////////////////////////////////////
-   double average_min_vol=0;
-
-   if(def_average_vol==0)
-     {
-      if(ask_true)
-        {
-         long cum_vol=0;
-         int count = 0;
-         for(int i = m_best_ask_index;i>0;i--)
-           {
-            if(MarketBook[i].volume<min_vol)
-              {cum_vol=cum_vol+MarketBook[i].volume;count++;}
-           }
-         if(count!=0)
-           {average_min_vol=cum_vol/count;}
-        }
-
-      else
-        {
-         long cum_vol=0;
-         int count=0;
-         for(int i= m_best_bid_index;i<bookSize;i++)
-           {
-            if(MarketBook[i].volume<min_vol)
-              {cum_vol=cum_vol+MarketBook[i].volume;count++;}
-            if(count!=0)
-              {average_min_vol=cum_vol/count;}
-           }
-        }
-     }
-   double curr_average_min;
-   if(def_average_vol==0)
-     {curr_average_min=average_min_vol;}
-   else{curr_average_min=def_average_vol;}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-   if(ask_true)
-     {
-      for(int i=m_best_ask_index;i>0;i--)
-
-        {
-         if(MarketBook[i].volume>curr_average_min*2 && fl_start==0)
-           {
-            first_accumulation_price=MarketBook[i].price;fl_start=1;
-            int count=0;
-            int const_count=0;
-            long cumulative_vol=0;
-            int big_vol_flag=0;
-            long largest_vol=0;
-
-            for(int a=i;a>0;a--)
-
-              {
-               count++;
-               cumulative_vol=cumulative_vol+MarketBook[a].volume;
-               if(MarketBook[a].volume>largest_vol){largest_vol=MarketBook[a].volume;}
-               if(cumulative_vol>=def_cumulative_vol)
-                 {last_accumulation_price=MarketBook[a].price;break;}
-              }
-           }
-        }
-     }
-
-   else
-     {
-      for(int i=m_best_bid_index;i<bookSize;i++)
-
-        {
-         if(MarketBook[i].volume>curr_average_min*2 && fl_start==0)
-           {
-            first_accumulation_price=MarketBook[i].price; fl_start=1;
-            int count=0;
-            int const_count=0;
-            int big_vol_flag= 0;
-            long largest_vol=0;
-            long cumulative_vol=0;
-            for(int a=i;a<bookSize;a++)
-              {
-               count++;
-               cumulative_vol=cumulative_vol+MarketBook[a].volume;
-               if(MarketBook[a].volume>largest_vol){largest_vol=MarketBook[a].volume;}
-               if(cumulative_vol>=def_cumulative_vol)
-                 {last_accumulation_price=MarketBook[a].price;break;}
-              }
-           }
-        }
-     }
-
-   return 0;
-  }
-//+------------------------------------------------------------------+
-//|                            future use, checks                                       |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-
-//+------------------------------------------------------------------+
-bool CheckActualAccumulation(bool ask_true,double first_acc_price,double last_acc_price,long last_acc_volume,double diff_coeff)//diff coeff = min zna4enie deleniya novogo obiema na starii
-  {
-
-   MqlBookInfo MarketBook[];
-   MarketBookGet(_Symbol,MarketBook);
-   long cum_vol=0;
-
-   if(ask_true)
-     {
-      for(int i=20;i>0;i--)
-         //+------------------------------------------------------------------+
-         //|                                                                  |
-         //+------------------------------------------------------------------+
-        {
-         if(MarketBook[i].price==first_acc_price)
-           {
-            for(int a=i;a>0;a++)
-               //+------------------------------------------------------------------+
-               //|                                                                  |
-               //+------------------------------------------------------------------+
-              {
-               cum_vol=cum_vol+MarketBook[a].volume;
-               if(MarketBook[a].price==last_acc_price){break;}
-              }
-           }
-        }
-     }
-
-   else
-     {
-      int BookSize=ArraySize(MarketBook);
-      for(int i=20;i<BookSize;i++)
-
-        {
-         if(MarketBook[i].price==first_acc_price)
-           {
-            for(int a=i;a<BookSize;a++)
-
-              {
-               cum_vol=cum_vol+MarketBook[a].volume;
-               if(MarketBook[a].price==last_acc_price){break;}
-              }
-           }
-        }
-     }
-   if(cum_vol/last_acc_volume>diff_coeff)
-     {return true;}
-   else {return false;}
-
-  }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
@@ -1067,10 +661,8 @@ void OnTimer()
 // Print("Small : ",curr_book.small_book_volume," Middle : ",curr_book.middle_book_volume," Large : ",curr_book.large_book_volume);
   }
 //+------------------------------------------------------------------+
-//|        add order to local register                                                          |
+//|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-
 int AddOrderToRegistry(double price_open,double volume,int expiration_sec,int expiration_chain_sec,double strike_price,bool ask_true,bool boost_flag,datetime time_init,double check_near_range=0)
                                                                                                                                                                                                 //+------------------------------------------------------------------+
   {
@@ -1205,12 +797,6 @@ void GetAccumulateAverageParameteres(double price_last,bool higher)//higher = tr
    double total_underwater_spread_executed_lot=0;
    int size=ArraySize(accumulate_registry);
    for(int i=0;i<size;i++)
-      //+------------------------------------------------------------------+
-      //|                                                                  |
-      //+------------------------------------------------------------------+
-      //+------------------------------------------------------------------+
-      //|                                                                  |
-      //+------------------------------------------------------------------+
      {
       if(i==100){continue;}
       if(accumulate_registry[i].price_open==0){continue;}
@@ -1358,18 +944,10 @@ void GetAccumulateAverageParameteres(double price_last,bool higher)//higher = tr
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
 int SetExecutionToRegistryOrder(double price,bool ask_true,double volume) //checked
   {
    int index=GetAccumulateIndexByPrice(price,volume,true,true,ask_true);
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
+
    if(index!=1111)
      {
       if(accumulate_registry[index].ask_true==ask_true)
@@ -1426,19 +1004,10 @@ void AddTicketToRegistry(ulong ticket,double price,bool ask_true)
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
 int GetAccumulateIndexByPrice(double price,double volume=0,bool unexecuted=false,bool ask_true_match=false,bool ask_true=true)//polu4aem nomer elementa massiva accumulate_registry po cene//esli return 1111 togds ni4ego ne nshlos
   {
    int size=ArraySize(accumulate_registry);
    for(int z=0;z<size;z++)
-      //+------------------------------------------------------------------+
-      //|                                                                  |
-      //+------------------------------------------------------------------+
-      //+------------------------------------------------------------------+
-      //|                                                                  |
-      //+------------------------------------------------------------------+
      {
       if(unexecuted)
         {if(accumulate_registry[z].is_executed==1){continue;}}
@@ -1452,8 +1021,6 @@ int GetAccumulateIndexByPrice(double price,double volume=0,bool unexecuted=false
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-
 void DeleteExpiredRegistryOrders(bool stock_mode=true)
   {
    int fl_del=0;
@@ -1612,9 +1179,6 @@ void SetNullForAccumulateRegistry(int single_index=1111,double price=0,bool spre
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
 void DeleteUnstructedOrders(bool registry_mode)
   {
    int orders=OrdersTotal();
@@ -1653,113 +1217,8 @@ void DeleteUnstructedOrders(bool registry_mode)
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-void SetNullForExpirateParameter(int value,bool ask_true,bool expirate_time_ticket=false,bool expirate_range_ticket=false)
-  {
-   int size=ArraySize(accumulate_registry);
-   for(int t=0;t<size;t++)
-     {
-      if(accumulate_registry[t].ask_true==ask_true && accumulate_registry[t].is_executed==1)
-        {
-         if(expirate_time_ticket)
-           {
-            if(accumulate_registry[t].pos_expiration_ticket==value)
-              {accumulate_registry[t].pos_expiration_ticket=0;}
-           }
-         if(expirate_range_ticket)
-           {
-            if(accumulate_registry[t].expiration_range_ticket==value)
-              {accumulate_registry[t].expiration_range_ticket=0;}
-           }
-        }
-     }
-  }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-
-void ExpirateExpiredPos(bool plus_expiration_too=true,bool simple_mode=true)
-  {
-   int fl_common=0;
-   int fl_simple=0;
-   double pr=0;
-   int size=ArraySize(accumulate_registry);
-   for(int i=0;i<size;i++)
-     {
-
-      if(curr_position==5 && accumulate_registry[i].pos_expiration_sec!=0 && accumulate_registry[i].ask_true==true && accumulate_registry[i].is_executed==1 && accumulate_registry[i].pos_expiration_ticket==0)
-        {
-         if(TimeCurrent()-accumulate_registry[i].execution_time<accumulate_registry[i].pos_expiration_sec){continue;}
-         fl_common=0;
-         fl_simple=0;
-         pr=0;
-
-         if(plus_expiration_too){fl_common=1;}
-         else
-           {
-            if(curr_ask>accumulate_registry[i].price_open)
-              {fl_common=1;}
-           }
-
-         if(simple_mode){fl_simple=1;pr=curr_bid+1;}
-         else
-           {
-            //obrabot4ik variativnogo zakritiya
-           }
-         if(fl_common==1 && fl_simple==1)
-           {
-            accumulate_registry[i].pos_expiration_ticket=expiration_pos_ticket_count;
-
-            AddOrderToRegistry(pr,accumulate_registry[i].volume,60,false,false,false,10000,accumulate_registry[i].pos_expiration_ticket);
-            PlaceOrder(pr,accumulate_registry[i].volume,true,true,0);
-            expiration_pos_ticket_count++;
-            Print("Set TIME expiration for order priced by ",accumulate_registry[i].price_open," for price ",pr);
-           }
-        }
-
-      if(curr_position==6 && accumulate_registry[i].ask_true==false && accumulate_registry[i].is_executed==1 && accumulate_registry[i].pos_expiration_ticket==0)
-        {
-         if(TimeCurrent()-accumulate_registry[i].execution_time<accumulate_registry[i].pos_expiration_sec){continue;}
-         fl_common=0;
-         fl_simple=0;
-         pr=0;
-
-         if(plus_expiration_too){fl_common=1;}
-         else
-           {
-            if(curr_bid<accumulate_registry[i].price_open)
-              {fl_common=1;}
-           }
-
-         if(simple_mode){fl_simple=1;pr=curr_ask-1;}
-         else
-           {
-            //obrabot4ik variativnogo zakritiya
-           }
-         if(fl_common==1 && fl_simple==1)
-           {
-            accumulate_registry[i].pos_expiration_ticket=expiration_pos_ticket_count;
-
-            AddOrderToRegistry(pr,accumulate_registry[i].volume,60,true,true,false,10000,accumulate_registry[i].pos_expiration_ticket);
-            PlaceOrder(pr,accumulate_registry[i].volume,false,true,0);
-            Print("Set TIME expiration for order priced by ",accumulate_registry[i].price_open," for price ",pr);
-            expiration_pos_ticket_count++;
-           }
-        }
-     }
-  }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
 void OnBookEvent(const string &symbol)
   {
-   return;
-   SymbolInfoTick(_Symbol,last_tick);
-
-   MqlTick tick[1];
-   CopyTicks(_Symbol,tick,COPY_TICKS_TRADE,0,1);
-   Print("Vol : ",tick[0].volume,"Time : ",tick[0].time_msc);
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
@@ -1776,7 +1235,7 @@ void RecoverExpiredSellOrders()
         {
          if(accumulate_registry[i].ask_true==true)
            {
-            
+
             if(!IsActualOrder(accumulate_registry[i].price_open))
               {
                PlaceOrder(accumulate_registry[i].price_open,accumulate_registry[i].volume,false,true,0);Print("Recovered yesterday order on price ",accumulate_registry[i].price_open);
@@ -1796,8 +1255,10 @@ void MarginControl()
 
   }
 //+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
 bool IsActualOrder(double price)
-{
+  {
    int fl=0;
    int orders=OrdersTotal();
    for(int i=0;i<=orders;i++)
@@ -1805,59 +1266,18 @@ bool IsActualOrder(double price)
       ulong ticket=OrderGetTicket(i);
       if(ticket!=0)
         {
-        if(OrderSelect(ticket)) 
-        {
-        
-         
-        
-         if(OrderGetInteger(ORDER_TYPE)==ORDER_TYPE_SELL_LIMIT && OrderGetDouble(ORDER_PRICE_OPEN)==price)
+         if(OrderSelect(ticket))
            {
-            fl=1;
+
+            if(OrderGetInteger(ORDER_TYPE)==ORDER_TYPE_SELL_LIMIT && OrderGetDouble(ORDER_PRICE_OPEN)==price)
+              {
+               fl=1;
+              }
            }
-         }
-       }
+        }
      }
    if(fl==1){return true;}
    return false;
-}
-
-//void executeTestOrders()
-//  {
-//   int size=ArraySize(accumulate_registry);
-//   for(int i=0; i<size;i++)
-//     {
-//     accumulate_info c = accumulate_registry[i];
-//      if(c.is_executed==0)
-//        {
-//         if(c.ask_true==true && last_tick.last>=c.price_open && c.is_covered==0)
-//           {
-//            PlaceOrder(c.price_open, c.volume, false, true, 0);
-//            c.is_covered=1;
-//            GetAccumulateAverageParameteres(curr_last, false);
-//           }
-//         else if(accumulate_registry[i].ask_true==false && last_tick.last<=accumulate_registry[i].price_open && accumulate_registry[i].is_covered==0)
-//           {
-//            PlaceOrder(accumulate_registry[i].price_open,accumulate_registry[i].volume,true,true,0);accumulate_registry[i].is_covered=1;
-//            GetAccumulateAverageParameteres(curr_last, false);
-//           }
-//
-//        }
-//     }
-//  }
-
-void executeTestOrders() {
-   int size = ArraySize(accumulate_registry);
-   for (int i=0; i<size; ++i) {
-        accumulate_info c = accumulate_registry[i];
-        int buy_multiplier = c.ask_true ? 1 : -1;
-        if(!c.is_executed  && !c.is_covered && buy_multiplier * last_tick.last >= c.price_open * buy_multiplier) {
-            c.is_covered = 1;
-            PlaceOrder(c.price_open, c.volume, !c.ask_true, true, 0);
-            GetAccumulateAverageParameteres(curr_last, false);
-        }          
   }
-}
-
-//---
 
 //+------------------------------------------------------------------+
