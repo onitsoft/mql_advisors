@@ -288,7 +288,6 @@ void OnTick()
       //Check again if the decrease is high enough to enter a new position
       if((mrate[0].open-last_tick.bid)/mrate[0].open>decrease_coeff_init)
         {fl_percent=1;fl_impact=1;}
-
      }
 //check if position already exists on this asset, internal function
    if(PositionSelect(_Symbol))
@@ -309,7 +308,12 @@ void OnTick()
       GetAccumulateAverageParameteres(curr_last,false);
      }
 //END EXECUTION MODULE
-   
+
+   if(print_comments)
+     {
+     if(TimeCurrent()-last_comment_time>=1)
+     {}
+     }
   }
 //checks if the tick is not a proceeded by a high spike (e.g don't but on a correction)
 bool IsNotNewHighImpact(string symbol,int range,double  check_movement_coeff,double price_init,double curr_price)
@@ -1281,3 +1285,29 @@ bool IsActualOrder(double price)
   }
 
 //+------------------------------------------------------------------+
+void PrintComment()
+  {
+   comment1.Clear();
+   int curr_num=0;
+   int size=ArraySize(accumulate_registry);
+   for(int x=0;x<size;x++)
+     {
+      if(accumulate_registry[x].price_open!=0)
+        {
+         comment1.SetText(curr_num,"op "+accumulate_registry[x].price_open+
+                          " ex "+accumulate_registry[x].is_executed+
+                          " atr "+accumulate_registry[x].ask_true+
+                          
+                          " ind "+accumulate_registry[x].index_value+
+                          " rdev "+accumulate_registry[x].result_dev_value+
+                          
+                        
+                          " Index "+x
+                          ,COLOR_TEXT
+                          );
+         curr_num++;
+        }
+      comment1.Show();
+     }
+
+  }
