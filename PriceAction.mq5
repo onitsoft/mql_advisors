@@ -1,60 +1,60 @@
 #include <Trade\Trade.mqh> 
 CTrade trade;
 
-input bool custom_high_filter=true;
-input int custom_high_range_hours=720;
-input double high_filter_percent_diff=0.05;
+input bool custom_high_filter = true;
+input int custom_high_range_hours = 720;
+input double high_filter_percent_diff = 0.05;
 
-input bool margin_control=true;
+input bool margin_control = true;
 
-input int check_bars_range=5;
-input double decrease_coeff_init=0.03;
-input double max_steps=20;
-double lot_margin=1000;
-input double robot_amount_deposit_percent=0.15;
+input int check_bars_range = 5;
+input double decrease_coeff_init = 0.03;
+input double max_steps = 20;
+double lot_margin = 1000;
+input double robot_amount_deposit_percent = 0.15;
 
-input double intercept_lot=1;
-input double grid_percent_range=0.01;
-input int grid_chain_sec=7000;
+input double intercept_lot = 1;
+input double grid_percent_range = 0.01;
+input int grid_chain_sec = 7000;
 
-input bool recover_expired_daily_ordes=true;
-input double critical_margin_level=10000;
+input bool recover_expired_daily_ordes = true;
+input double critical_margin_level = 10000;
 
-input bool use_drop_modifier=true;
-input double drop_value=0.003;
+input bool use_drop_modifier = true;
+input double drop_value = 0.003;
 
-bool quote_mode=false;
-int quote_step =2;
-double curr_lot=1;
-bool pos_timing_control=false;
-double curr_last=0;
-double curr_bid =0;
-double curr_ask =0;
+bool quote_mode = false;
+int quote_step = 2;
+double curr_lot = 1;
+bool pos_timing_control = false;
+double curr_last = 0;
+double curr_bid = 0;
+double curr_ask = 0;
 MqlTick last_tick;
-int curr_position=0;
-double curr_deposit=0;
-int OCOnum=1;
+int curr_position = 0;
+double curr_deposit = 0;
+int OCOnum = 1;
 MqlDateTime stime;
-bool low_margin=false;
-int trade_permission=1;
-datetime last_registry_recover=TimeCurrent();
+bool low_margin = false;
+int trade_permission = 1;
+datetime last_registry_recover = TimeCurrent();
 
 
 
 struct parse_result
   {
-   int               OCOnum;
-   double            price_open;
-   double            volume;
-   double            strike_price;
+   int OCOnum;
+   double price_open;
+   double volume;
+   double strike_price;
   };
 
 
 struct high_info
   {
-   datetime          high_date;
-   double            high_price;
-   double            current_diff;
+   datetime high_date;
+   double high_price;
+   double current_diff;
 
   };
 high_info current_high_info;
@@ -253,17 +253,15 @@ double spread_underwater_executed_lot=0;
 //| | 
 //+------------------------------------------------------------------+ 
 int OnInit()
-  {
+{
 
-   if(AccountInfoInteger(ACCOUNT_LOGIN)!=25584)
-     {
-      if(AccountInfoInteger(ACCOUNT_LOGIN)!=28000)
-        {
-         Print("wrong account, retard");
-         ExpertRemove();
-         return(INIT_FAILED);
-        }
-     }
+   if(AccountInfoInteger(ACCOUNT_LOGIN) != 25584 
+      && AccountInfoInteger(ACCOUNT_LOGIN)!=28000)
+   {
+       Print("wrong account, retard");
+       ExpertRemove();
+       return(INIT_FAILED);
+   }
 
    curr_deposit=GlobalVariableGet("curr_depo");
    MarketBookAdd(_Symbol);
@@ -271,11 +269,12 @@ int OnInit()
    SetLotMargin();
    Print(" deposit ",curr_deposit);
    if(curr_deposit==0)
-     {
+   {
       curr_deposit=1000000;
-     }
+   }
+   
    if(margin_control && curr_deposit!=0)
-     {
+   {
       double lt=NormalizeDouble(((curr_deposit*robot_amount_deposit_percent)/max_steps)/lot_margin,0);
       if(lt!=0)
         {
@@ -283,9 +282,9 @@ int OnInit()
         }
 
      }
-   Print(" Lot : ",curr_lot);
-   return(INIT_SUCCEEDED);
-  }
+     Print(" Lot : ",curr_lot);
+     return(INIT_SUCCEEDED);
+   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
@@ -393,7 +392,13 @@ void OnTick()
          fl_margin)
         {
          //buys lot amount for every adecrease of grid_percnet_ragne in price 
-         CreateStockGrid(last_tick.bid,curr_lot,grid_percent_range,grid_percent_range,false,0,grid_chain_sec);
+         CreateStockGrid(last_tick.bid,
+                         curr_lot,
+                         grid_percent_range,
+                         grid_percent_range,
+                         false,
+                         0,
+                         grid_chain_sec);
          GetAccumulateAverageParameteres(curr_last);
         }
 
@@ -401,7 +406,12 @@ void OnTick()
      }
 //checks if the tick is not a proceeded by a high spike (e.g don't but on a correction) 
 
-   bool PlaceOrder(const double price,const double lots,const bool buy_true,const bool limit_true,const ulong magic,string comment)
+   bool PlaceOrder(const double price,
+                   const double lots,
+                   const bool buy_true,
+                   const bool limit_true,
+                   const ulong magic,
+                   string comment)
      {
       MqlTradeRequest mrequest;
       MqlTradeResult mresult;
@@ -549,7 +559,7 @@ void OnTick()
       if(higher)
         {
          prom_price=price+(price*percentage);
-         double curr_point=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+         double curr_point=SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
          if(curr_point!=0.0001 &&
             curr_point!=0.001 &&
             curr_point!=0.01 &&
@@ -583,10 +593,10 @@ void OnTick()
 //| create orders grid, add to local register using struct | 
 //+------------------------------------------------------------------+ 
 //+------------------------------------------------------------------+ 
-   void CreateStockGrid(double init_stock_price,double lot,double price_percent_step,
-                        double strike_percentile,bool ask_true,int exp_sec,int exp_chain_sec,
-                        bool book_mode=false,int book_step=1,int steps=3,bool intercept_flag=false,
-                        bool quote_flag=false,int counter_book_flag=0,double progressive_coeff=0)//1 step = init price; 
+   void CreateStockGrid(double init_stock_price, double lot, double price_percent_step,
+                        double strike_percentile, bool ask_true, int exp_sec,int exp_chain_sec,
+                        bool book_mode=false, int book_step=1, int steps=3, bool intercept_flag=false,
+                        bool quote_flag=false, int counter_book_flag=0, double progressive_coeff=0)//1 step = init price; 
 
      {
 
@@ -808,7 +818,7 @@ void OnTick()
 
    void OnTimer()
      {
-
+      curr_deposit=GlobalVariableGet("curr_depo");
       if(stime.hour<10){return;}
       if(stime.hour==18 && stime.min>40){return;}
       if(stime.hour>=19){return;}
